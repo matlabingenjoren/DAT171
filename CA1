@@ -1,0 +1,276 @@
+# DAT 171 Assignment 1
+# Written by Oskar Ekberg and Kevin Johansson Billskog
+import math
+import time
+
+import matplotlib.pyplot as plt
+import numpy as np
+from matplotlib.collections import LineCollection
+from scipy.sparse import csr_matrix
+from scipy import spatial
+
+# global data and variables
+filename = 'GermanyCities.txt'
+
+if filename == 'SampleCoordinates.txt':
+    radius = 0.08
+    start_city = 0
+    end_city = 5
+elif filename == 'HungaryCities.txt':
+    radius = 0.005
+    start_city = 311
+    end_city = 702
+else:  # filename == 'GermanyCities.txt'
+    radius = 0.0025
+    start_city = 1573
+    end_city = 10584
+
+
+# task 1:
+def read_coordinate_file(filename):
+    """
+    read the file and change the result into an array of coordinates xy from (a, b) where R=1
+    :param filename: The name of the file that is red to get the coordinates(in degrees) of cities
+    :return: En np array med koordinaterna omvandlade till x,y koordinater
+    :return: A np.array with the coordinates transfromed into the Mercator projection with x,y coordinates
+    """
+    with open(filename, mode='r') as file:
+        R = 1
+        pi = math.pi
+        l_coord = []
+        for line in file:
+            # separate the coordinates a, b
+            split_values = line.split(sep=',')
+            a = float(split_values[0].strip('{'))  # change into floats
+            b = float(split_values[1].strip('}\n'))
+
+            # calculate the positions in the xy grid
+            x = R * pi * b / 180
+            y = R * np.log(math.tan(pi / 4 + pi * a / 360))
+
+            # Add the coordinates to a list
+            l_coord.append([x, y])
+        coordinates = np.array(l_coord)  # Create an numpy array from the list
+    return coordinates
+
+
+# task 3:
+def construct_graph_connections(coord_list, radius):
+    """
+    returns all the pairs of cities that are within the given radius of each other and the distance between them
+    :param coord_list: A list for all coordinates (x,y) in the form of a N,2 numpy array, where N is the amount of cities
+    :param radius: This is the maximum allowed radius that defines if the cities are considered neighbors or not (possible to travel inbetween)
+    :return:
+    City_connections: A np.array of all cities that are close enough to each other
+    distance: a numpy array for all the distances between the pair of cities corresponding to the same index as city_connections
+    """
+    # create empty lists
+    l_cities = []
+    l_distance = []
+
+    # Loop over all the cities except for themself and check if their distance is smaller than the given radius
+    for ind1, city1 in enumerate(coord_list):
+        for ind2, city2 in enumerate(coord_list[ind1 + 1:][:]):
+            # Check so the difference in distance on the x and y axis is smaller than the allowed amount. If so we...
+            # calculate the exact distance between the cities
+            if abs(city1[0] - city2[0]) < radius and abs(city1[1] - city2[1]) < radius:
+                radie = math.dist(city1, city2)
+                if radie < radius:
+                    l_cities.append((ind1, ind2 + ind1 + 1))
+                    l_distance.append(radie)
+
+    # Create the returning arrays from the lists
+    city_connections = np.array(l_cities)
+    distance = np.array(l_distance)
+    return city_connections, distance
+
+
+# task 4
+def construct_graph(indices, distance, N):
+    """
+    Takes the points that are connected and returns them as a sparse matrix
+
+
+    :param indices: Array with the indices of the cities that are connected
+    :type indices: np.ndarray
+    :param distance: Array with the distance corresponding to the cities that are connected in indices
+    :type distance: np.ndarray
+    :param N: amount of data points
+    :type N: int
+    :return: sparse matrix with the cities on the x/y axis and the distance between them on each element [x, y]
+    """
+
+    l_col = []
+    l_row = []
+    for ind, index in enumerate(indices):
+        l_row.append(index[0])
+        l_col.append(index[1])
+    row = np.array(l_row)
+    col = np.array(l_col)
+    sparse_matrix = csr_matrix((distance, (row, col)), shape=(N, N))
+    return sparse_matrix
+
+
+# task 10
+def construct_fast_graph_connections(coord_list, radius):
+    """
+    Using the cKDTree function from SciPy to find the points that are close to each other faster than
+     the function construct_graph_connections
+
+    :param coord_list: A list for all coordinates (x,y) in the form of a N,2 numpy array, where N is the amount
+     of cities
+    :type coord_list: np.ndarray
+    :param radius: This is the maximum allowed radius that defines if the cities are considered neighbors or
+     not (possible to travel inbetween)
+    :type radius int
+    :return: a sparse matrix
+    """
+    # why does it only work when we import it in the function?
+
+    tree = spatial.cKDTree(coord_list)
+    tree1 = tree.query_ball_point(coord_list, radius)
+    matrix = spatial.cKDTree.sparse_distance_matrix(tree, tree, max_distance=radius)
+
+    for ind, result in tree.query_ball_point(coord_list, radius):
+        print(result)
+
+    # print(matrix+matrix)
+    # print([tree1[0]])
+    # print(coord_list)
+    # sparse_matrix = csr_matrix((distance, (row, col)), shape=(N, N))
+    return matrix
+
+
+# task 5
+def plot_points(coord_list, indices, path):
+    """
+    Plot the graph showing the cities roads and the shortest road to take from city a to city b
+    :param coord_list: A list for all coordinates (x,y) in the form of a N,2 numpy array,
+    where N is the amount of cities
+    :param indices: A list of cities with roads in-between them in the form of a N,2 array,
+    where N is the amount of roads
+    :param path: A list of cities to travel between to reach from city A to city B in the form of a 1,N array,
+    where N is the amount of roads traveled from city A to B
+    :return: A plot of all the cities colored red, roads between them colored gray and
+    the path traveled from city A to B colored blue
+    """
+    #
+    # initialise arrays of correct sizes
+    x = np.zeros(len(coord_list))
+    y = np.zeros(len(coord_list))
+    roads = []  # List of all roads
+    for index in range(len(coord_list)):  # Add coordinates to cities
+        x[index] = coord_list[index][0]
+        y[index] = coord_list[index][1]
+
+    for city_pair in range(len(indices)):
+        roads.append([(coord_list[indices[city_pair][0]][0], coord_list[indices[city_pair][0]][1]),
+                      (coord_list[indices[city_pair][1]][0], coord_list[indices[city_pair][1]][1])])
+
+    # task 8 plot shortest path
+    pathway_plot = []
+    for index in range(len(path) - 1):
+        path_plot = [(coord_list[path[index]][0], coord_list[path[index]][1]),
+                     (coord_list[path[index + 1]][0], coord_list[path[index + 1]][1])]
+        pathway_plot.append(path_plot)
+
+    # plot the actual graph and add the correct colors and sizes
+    line_segments = LineCollection(roads, colors='gray', linewidths=0.5)
+    shortest_line = LineCollection(pathway_plot, colors='blue', linewidths=1.5, zorder=3)
+    fig = plt.figure()
+    ax = fig.gca()
+    ax.add_collection(line_segments)
+    ax.add_collection(shortest_line)
+    labels = ['Roads', 'Shortest Path', 'Cities']
+    plt.scatter(x, y, c='red', zorder=2)
+    plt.axis('equal')
+    plt.legend(labels, loc='upper left')
+
+
+# task 6
+def find_shortest_path(graph, start):
+    """
+    It finds the shortest path from a chosen city to all other defined cities
+    :param graph: A sparse matrix with the cities on the x/y axis and the distance between them on each element [x, y]
+    :type graph: scipy.<csr_matrix
+
+    :param start: Start node
+    :type start: int
+    This it the starting city which you find the shortest path from to all other cities
+
+    :returns: dist_matrix: ndarray
+    Returns a N matrix of the distance between cities, where N is the amount of cities
+
+    :return: predecessors: ndarray
+    returns a N matrix which tells which city to travel from to reach this city in the shortest distance possible with regards to the starting city
+    """
+
+    from scipy.sparse.csgraph import shortest_path
+    dist_matrix, predecessors = shortest_path(csgraph=graph, directed=False, indices=start, return_predecessors=True)
+
+    return dist_matrix, predecessors
+
+
+# task 7
+def compute_path(predecessor_matrix, start_node, end_node):
+    """
+    Calculating the route from the end city to the start city using the predecessor matrix calculated in the function
+    find_shortest_path
+
+    :param predecessor_matrix:
+    :param start_node: This it the starting city which you find the shortest path from to all other cities
+    :type start_node: int
+    :param end_node: This it the city we want to reach from the starting city
+    :type end_node: int
+    :return: returns a list with all the city numbers that we will pass through while walking from the start city to the
+     end city
+    """
+    l_shortest_path = [end_node]
+    index = end_node
+    while predecessor_matrix[index] > -1:
+        l_shortest_path.insert(0, predecessor_matrix[index])
+        index = predecessor_matrix[index]
+    if index != start_node:
+        print('Finns inte någon väg till start staden')
+    return l_shortest_path
+
+
+total_tid = time.time()
+t = time.time()
+xy_grid = read_coordinate_file(filename)
+print('läsa filen tog {:4.3f}s och ska ta 0.03 s'.format(time.time() - t))
+
+t = time.time()
+city_connections, distance = construct_graph_connections(xy_grid, radius)
+print('skapa xy griden tog {:4.3f}s och ska ta 70 s'.format(time.time() - t))
+
+t = time.time()
+sparse_matrix = construct_graph(city_connections, distance, len(xy_grid))
+# sparse_matrix = construct_fast_graph_connections(xy_grid, radius)
+print('construct graph tog {:4.3f}s och ska ta 0.002 s'.format(time.time() - t))
+
+t = time.time()
+dist_matrix, predecessor = find_shortest_path(sparse_matrix, start_city)
+shortest_path = compute_path(predecessor, start_city, end_city)
+print('task 6+7 tog {:4.3f}s och ska ta 0.007 s'.format(time.time() - t))
+
+t = time.time()
+plot_points(xy_grid, city_connections, shortest_path)
+print('plotta stadskartan och vägen tog {:4.3f}s och ska ta 2 s'.format(time.time() - t))
+print('Hela programmet tog {:4.3f}s och ska ta 1 s'.format(time.time() - total_tid))
+plt.show()
+
+"""
+1 klar
+2 klar
+3 klar
+4 - klar
+5 - klar 
+6 - klar
+7 - klar
+8 - klar
+9 - klar
+10 - göra
+Contruct_graph tid
+construct graph tog 0.059s och ska ta 0.002 s
+"""
